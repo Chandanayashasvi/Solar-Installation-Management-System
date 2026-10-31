@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.env
+*.log
+backend/uploads/
+.DS_Store
+coverage/
+
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+uploads/
+
+/legacy/*.zip
