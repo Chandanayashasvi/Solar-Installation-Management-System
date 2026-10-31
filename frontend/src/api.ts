@@ -1,4 +1,4 @@
-export interface User { id: string; name: string; role: "ADMIN" | "SALES" | "WAREHOUSE" | "TECHNICIAN" | "SUPPORT" }
+export interface User { id: string; name: string; email?: string; role: "ADMIN" | "SALES" | "SURVEYOR" | "WAREHOUSE" | "TECHNICIAN" | "SUPPORT" | "FINANCE" }
 const KEY = "solar_token";
 export const getToken = () => sessionStorage.getItem(KEY);
 export const setToken = (t: string | null) => (t ? sessionStorage.setItem(KEY, t) : sessionStorage.removeItem(KEY));

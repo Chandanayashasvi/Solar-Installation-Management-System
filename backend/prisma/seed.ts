@@ -9,7 +9,7 @@ const monthsAgo = (m: number) => { const d = new Date(); d.setUTCMonth(d.getUTCM
 
 async function main() {
   const hash = await bcrypt.hash(PASSWORD, 10);
-  const users = [["admin", "Director Demo", "ADMIN"], ["sales", "Sales Demo", "SALES"], ["store", "Warehouse Demo", "WAREHOUSE"], ["tech", "Technician Demo", "TECHNICIAN"], ["support", "Support Demo", "SUPPORT"]] as const;
+  const users = [["admin", "Director Demo", "ADMIN"], ["sales", "Sales Demo", "SALES"], ["surveyor", "Surveyor Demo", "SURVEYOR"], ["store", "Warehouse Demo", "WAREHOUSE"], ["tech", "Technician Demo", "TECHNICIAN"], ["support", "Support Demo", "SUPPORT"], ["finance", "Finance Demo", "FINANCE"]] as const;
   for (const [u, name, role] of users) await prisma.user.upsert({ where: { email: `${u}@sunpower.demo` }, update: {}, create: { email: `${u}@sunpower.demo`, name, role, passwordHash: hash } });
 
   const cats: Record<string, string> = {};
@@ -67,7 +67,7 @@ async function main() {
   async function installed(phone: string, name: string, address: string, pkgName: string, monthsSinceDelivery: number, serials: Record<string, string>, payFull: boolean) {
     const pkg = await prisma.package.findUniqueOrThrow({ where: { name: pkgName }, include: { items: { include: { product: true } } } });
     const cust = await prisma.customer.create({ data: { name, phone, address } });
-    const enq = await prisma.enquiry.create({ data: { customerId: cust.id, requestedKw: pkg.capacityKw, systemType: pkg.systemType, status: "WON", source: "WEB", createdAt: monthsAgo(monthsSinceDelivery + 2) } });
+    const enq = await prisma.enquiry.create({ data: { customerId: cust.id, requestedKw: pkg.capacityKw, systemType: pkg.systemType, monthlyBill: 2500, subsidyRequirement: "YES", isDemo: true, status: "WON", source: "WEB", createdAt: monthsAgo(monthsSinceDelivery + 2) } });
     await prisma.survey.create({ data: { enquiryId: enq.id, roofArea: 40, shadowFreeArea: 28, direction: "South", tilt: 18, cableDistance: 15, monthlyBill: 4200, gridSuitable: true, status: "APPROVED", technicianId: tech.id, decidedAt: monthsAgo(monthsSinceDelivery + 1) } });
     const lines = pkg.items.map((i) => ({ productId: i.productId, description: i.product.name, qty: bomQty({ productId: i.productId, fixedQty: i.fixedQty, qtyPerKw: Number(i.qtyPerKw) }, pkg.capacityKw), unitPrice: Number(i.product.price), taxRate: Number(i.product.taxRate) }));
     lines.push({ productId: prod["INSTALL-SVC"], description: `Installation – ${pkg.capacityKw} kW`, qty: 1, unitPrice: Number(pkg.installationCharge), taxRate: 18 });
@@ -99,12 +99,12 @@ async function main() {
 
   // pipeline examples
   const s = await prisma.customer.create({ data: { name: "Suresh Reddy (demo)", phone: "9000000003", address: "H.No 8-2, Demo Nagar, Secunderabad" } });
-  const e1 = await prisma.enquiry.create({ data: { customerId: s.id, requestedKw: 3, systemType: "ON_GRID", status: "QUALIFIED", source: "CALL", notes: "Wants subsidy" } });
+  const e1 = await prisma.enquiry.create({ data: { customerId: s.id, requestedKw: 3, systemType: "ON_GRID", monthlyBill: 5100, subsidyRequirement: "YES", isDemo: true, status: "QUALIFIED", source: "CALL", notes: "Demo enquiry — requests subsidy guidance" } });
   await prisma.survey.create({ data: { enquiryId: e1.id, roofArea: 36, shadowFreeArea: 30, direction: "South-West", tilt: 15, cableDistance: 18, monthlyBill: 5100, gridSuitable: true, status: "APPROVED", technicianId: tech.id, decidedAt: new Date() } });
   const m = await prisma.customer.create({ data: { name: "Meena Iyer (demo)", phone: "9000000004", address: "Road 5, Sample Layout, Hyderabad" } });
-  await prisma.enquiry.create({ data: { customerId: m.id, requestedKw: 5, systemType: "OFF_GRID", status: "NEW", source: "WEB" } });
+  await prisma.enquiry.create({ data: { customerId: m.id, requestedKw: 5, systemType: "OFF_GRID", monthlyBill: 7200, subsidyRequirement: "GUIDANCE", isDemo: true, status: "NEW", source: "WEB" } });
   const k = await prisma.customer.create({ data: { name: "Karthik N (demo)", phone: "9000000005", address: "Villa 22, Demo Gardens, Hyderabad" } });
-  const e3 = await prisma.enquiry.create({ data: { customerId: k.id, requestedKw: 2, systemType: "ON_GRID", status: "SURVEY_SCHEDULED", source: "WHATSAPP" } });
+  const e3 = await prisma.enquiry.create({ data: { customerId: k.id, requestedKw: 2, systemType: "ON_GRID", monthlyBill: 2800, subsidyRequirement: "NO", isDemo: true, status: "SURVEY_SCHEDULED", source: "WHATSAPP" } });
   await prisma.survey.create({ data: { enquiryId: e3.id, roofArea: 24, shadowFreeArea: 14, direction: "East", tilt: 10, cableDistance: 25, monthlyBill: 2800, gridSuitable: true, status: "PENDING", technicianId: tech.id } });
   console.log("Seed complete. Demo logins: <role>@sunpower.demo (admin, sales, store, tech, support) / " + PASSWORD);
 }

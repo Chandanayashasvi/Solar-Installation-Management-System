@@ -17,8 +17,8 @@ catalogRoutes.patch("/products/:id", allow("WAREHOUSE"), ah(async (req, res) => 
   res.json(await prisma.product.update({ where: { id: req.params.id }, data: d }));
 }));
 catalogRoutes.get("/packages", ah(async (_req, res) => res.json(await prisma.package.findMany({ where: { active: true }, orderBy: [{ systemType: "asc" }, { capacityKw: "asc" }], include: { items: { include: { product: { select: { name: true } } } } } }))));
-catalogRoutes.get("/users", allow("SALES", "WAREHOUSE", "SUPPORT"), ah(async (req, res) => {
-  const role = z.enum(["TECHNICIAN", "SALES", "SUPPORT", "WAREHOUSE"]).optional().parse(req.query.role);
+catalogRoutes.get("/users", allow("SALES", "WAREHOUSE", "SUPPORT", "SURVEYOR", "FINANCE"), ah(async (req, res) => {
+  const role = z.enum(["TECHNICIAN", "SALES", "SURVEYOR", "SUPPORT", "WAREHOUSE", "FINANCE"]).optional().parse(req.query.role);
   res.json(await prisma.user.findMany({ where: { active: true, ...(role ? { role } : {}) }, select: { id: true, name: true, role: true } }));
 }));
 catalogRoutes.get("/warranty-policies", ah(async (_req, res) => res.json(await prisma.warrantyPolicy.findMany({ include: { product: { select: { name: true } } } }))));

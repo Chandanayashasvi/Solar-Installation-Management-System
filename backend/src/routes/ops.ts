@@ -1,13 +1,15 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { prisma, audit, n } from "../lib/db";
+import { prisma, audit, n, nextNumber } from "../lib/db";
 import { ah, AppError } from "../lib/errors";
 import { allow } from "../middleware/auth";
 import { addMonths } from "../lib/warranty";
 import { config } from "../config";
+import { receiptFingerprint } from "../lib/procurement";
 export const opsRoutes = Router();
 
 const serial = z.string().trim().toUpperCase().min(3).max(60).regex(/^[A-Z0-9][A-Z0-9\-_./]*$/, "Serial may contain letters, digits and - _ . /");
@@ -35,6 +37,151 @@ opsRoutes.post("/inventory/receive", allow("WAREHOUSE"), ah(async (req, res) => 
     await tx.stockMovement.create({ data: { productId: p.id, type: "RECEIPT", qty: d.qty, unitCost: d.unitCost ?? p.cost, userId: req.user!.id, note: d.supplier } });
   });
   res.status(201).json({ ok: true });
+}));
+opsRoutes.get("/purchase-orders", allow("WAREHOUSE"), ah(async (_req, res) => {
+  res.json(await prisma.purchaseOrder.findMany({
+    orderBy: { createdAt: "desc" },
+    include: { supplier: true, items: { include: { product: { select: { id: true, sku: true, name: true, trackSerial: true } } } } },
+  }));
+}));
+opsRoutes.post("/purchase-orders", allow("WAREHOUSE"), ah(async (req, res) => {
+  const d = z.object({
+    supplier: z.string().trim().min(2).max(100),
+    supplierPhone: z.string().trim().max(30).optional(),
+    expectedAt: z.coerce.date().optional(),
+    items: z.array(z.object({
+      productId: z.string().cuid(),
+      qty: z.coerce.number().int().min(1).max(5000),
+      unitCost: z.coerce.number().min(0).max(100_000_000),
+    })).min(1).max(100),
+  }).superRefine((value, ctx) => {
+    if (new Set(value.items.map((item) => item.productId)).size !== value.items.length) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Each product may only appear once in a purchase order", path: ["items"] });
+    }
+  }).parse(req.body);
+  const created = await prisma.$transaction(async (tx) => {
+    const products = await tx.product.findMany({ where: { id: { in: d.items.map((item) => item.productId) }, active: true, isService: false }, select: { id: true } });
+    if (products.length !== d.items.length) throw new AppError(400, "Every purchase order item must be an active stock product");
+    const supplier = await tx.supplier.upsert({
+      where: { name: d.supplier },
+      update: d.supplierPhone ? { phone: d.supplierPhone } : {},
+      create: { name: d.supplier, phone: d.supplierPhone },
+    });
+    let number = await nextNumber(tx, "purchase-order", "PO");
+    while (await tx.purchaseOrder.findUnique({ where: { number }, select: { id: true } })) number = await nextNumber(tx, "purchase-order", "PO");
+    const purchaseOrder = await tx.purchaseOrder.create({
+      data: {
+        number,
+        supplierId: supplier.id,
+        expectedAt: d.expectedAt,
+        createdById: req.user!.id,
+        items: { create: d.items },
+      },
+      include: { supplier: true, items: { include: { product: { select: { id: true, sku: true, name: true, trackSerial: true } } } } },
+    });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_CREATED", "PurchaseOrder", purchaseOrder.id, { number, itemCount: d.items.length });
+    return purchaseOrder;
+  });
+  res.status(201).json(created);
+}));
+opsRoutes.post("/purchase-orders/:id/order", allow("WAREHOUSE"), ah(async (req, res) => {
+  const purchaseOrder = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${req.params.id} FOR UPDATE`;
+    const current = await tx.purchaseOrder.findUnique({ where: { id: req.params.id } });
+    if (!current) throw new AppError(404, "Purchase order not found");
+    if (current.status === "ORDERED" || current.status === "PARTIALLY_RECEIVED") return current;
+    if (current.status !== "DRAFT") throw new AppError(409, `Cannot order a purchase order in ${current.status} status`);
+    const updated = await tx.purchaseOrder.update({ where: { id: current.id }, data: { status: "ORDERED", orderedAt: new Date() } });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_PLACED", "PurchaseOrder", current.id);
+    return updated;
+  });
+  res.json(purchaseOrder);
+}));
+opsRoutes.post("/purchase-orders/:id/items/:itemId/receive", allow("WAREHOUSE"), ah(async (req, res) => {
+  const d = z.object({
+    qty: z.coerce.number().int().min(1).max(5000),
+    serials: z.array(serial).max(5000).default([]),
+    idempotencyKey: z.string().trim().min(8).max(100),
+  }).parse(req.body);
+  const receiptNote = `purchase-order-item:${req.params.itemId}:${receiptFingerprint(d.serials)}`;
+  const result = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PurchaseOrder" WHERE id = ${req.params.id} FOR UPDATE`;
+    const existing = await tx.stockMovement.findUnique({ where: { idempotencyKey: d.idempotencyKey } });
+    if (existing) {
+      if (existing.purchaseOrderId !== req.params.id || existing.note !== receiptNote || existing.qty !== d.qty) {
+        throw new AppError(409, "This receipt key was already used for a different receipt");
+      }
+      return { duplicate: true, purchaseOrderId: req.params.id };
+    }
+    const purchaseOrder = await tx.purchaseOrder.findUnique({ where: { id: req.params.id } });
+    if (!purchaseOrder) throw new AppError(404, "Purchase order not found");
+    if (!["ORDERED", "PARTIALLY_RECEIVED"].includes(purchaseOrder.status)) throw new AppError(409, "Only an ordered purchase order can receive stock");
+    const item = await tx.purchaseOrderItem.findFirst({
+      where: { id: req.params.itemId, purchaseOrderId: purchaseOrder.id },
+      include: { product: true },
+    });
+    if (!item) throw new AppError(404, "Purchase order item not found");
+    const remaining = item.qty - item.receivedQty;
+    if (d.qty > remaining) throw new AppError(409, `Receipt exceeds remaining quantity (${remaining})`);
+    if (item.product.trackSerial) {
+      if (d.serials.length !== d.qty) throw new AppError(400, `Provide exactly ${d.qty} serial number(s)`);
+      if (new Set(d.serials).size !== d.serials.length) throw new AppError(400, "Duplicate serials in this request");
+      const conflicts = await tx.asset.findMany({ where: { serial: { in: d.serials } }, select: { serial: true } });
+      if (conflicts.length) throw new AppError(409, `Serial already exists: ${conflicts.map((asset) => asset.serial).join(", ")}`);
+    } else if (d.serials.length) {
+      throw new AppError(400, "This product is not serial-tracked");
+    }
+    const supplier = await tx.supplier.findUnique({ where: { id: purchaseOrder.supplierId } });
+    if (item.product.trackSerial) {
+      await tx.asset.createMany({
+        data: d.serials.map((serialNumber) => ({ serial: serialNumber, productId: item.productId, supplierId: supplier?.id })),
+      });
+    }
+    const updatedItem = await tx.purchaseOrderItem.update({
+      where: { id: item.id },
+      data: { receivedQty: { increment: d.qty } },
+    });
+    await tx.product.update({
+      where: { id: item.productId },
+      data: { stock: { increment: d.qty }, cost: item.unitCost },
+    });
+    await tx.stockMovement.create({
+      data: {
+        productId: item.productId,
+        type: "RECEIPT",
+        qty: d.qty,
+        unitCost: item.unitCost,
+        purchaseOrderId: purchaseOrder.id,
+        idempotencyKey: d.idempotencyKey,
+        note: receiptNote,
+        userId: req.user!.id,
+      },
+    });
+    const allItems = await tx.purchaseOrderItem.findMany({ where: { purchaseOrderId: purchaseOrder.id }, select: { qty: true, receivedQty: true } });
+    const allReceived = allItems.every((purchaseItem) => purchaseItem.receivedQty === purchaseItem.qty);
+    const anyReceived = allItems.some((purchaseItem) => purchaseItem.receivedQty > 0);
+    const status = allReceived ? "RECEIVED" : anyReceived ? "PARTIALLY_RECEIVED" : "ORDERED";
+    await tx.purchaseOrder.update({
+      where: { id: purchaseOrder.id },
+      data: { status, ...(allReceived ? { receivedAt: new Date() } : {}) },
+    });
+    await audit(tx, req.user!.id, "PURCHASE_ORDER_RECEIPT", "PurchaseOrder", purchaseOrder.id, { itemId: item.id, qty: d.qty, receiptKey: d.idempotencyKey });
+    return { duplicate: false, purchaseOrderId: purchaseOrder.id, item: updatedItem, status };
+  }).catch(async (error: unknown) => {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const existing = await prisma.stockMovement.findUnique({ where: { idempotencyKey: d.idempotencyKey } });
+      if (existing) {
+        if (existing.purchaseOrderId !== req.params.id || existing.note !== receiptNote || existing.qty !== d.qty) {
+          throw new AppError(409, "This receipt key was already used for a different receipt");
+        }
+        return { duplicate: true, purchaseOrderId: req.params.id };
+      }
+      const conflicts = await prisma.asset.findMany({ where: { serial: { in: d.serials } }, select: { serial: true } });
+      if (conflicts.length) throw new AppError(409, `Serial already exists: ${conflicts.map((asset) => asset.serial).join(", ")}`);
+    }
+    throw error;
+  });
+  res.status(result.duplicate ? 200 : 201).json(result);
 }));
 opsRoutes.post("/inventory/damage", allow("WAREHOUSE"), ah(async (req, res) => {
   const d = z.object({ serial: serial.optional(), productId: z.string().optional(), qty: z.coerce.number().int().min(1).default(1), note: z.string().trim().min(3).max(300) }).refine((v) => v.serial || v.productId, { message: "Provide a serial or a product" }).parse(req.body);

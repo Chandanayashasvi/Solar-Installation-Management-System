@@ -17,7 +17,7 @@ export default function Support() {
   const tickets = useLoad(() => api("/service/tickets"), []);
   const lookup = async (e?: React.FormEvent) => { e?.preventDefault(); await run(async () => setRes(await api(`/service/lookup/${encodeURIComponent(serial.trim())}`))); };
   return (<div className="space-y-4"><h1 className="text-xl font-bold">Warranty & service</h1>
-    <Card title="Look up a serial number"><form className="flex gap-2" onSubmit={lookup}><input aria-label="Serial number" className="flex-1 rounded-lg border px-3 py-2 font-mono uppercase" placeholder="e.g. DEMO-INV2-0001" value={serial} onChange={(e) => setSerial(e.target.value)} /><Btn>Search</Btn></form>
+    <Card title="Look up equipment warranty"><p className="mb-2 text-sm text-slate-500">Enter the serial printed on the product label. The example serial below belongs to demo data only.</p><form className="flex gap-2" onSubmit={lookup}><input aria-label="Serial number" className="flex-1 rounded-lg border px-3 py-2 font-mono uppercase" placeholder="Example: DEMO-INV2-0001" value={serial} onChange={(e) => setSerial(e.target.value)} /><Btn>Search</Btn></form>
       {res && <div className="mt-3 space-y-2 text-sm"><div className="flex items-center gap-2"><b>{res.product}</b><Badge v={res.warranty.status} /></div>
         <p>Customer: {res.customer?.name} · {res.customer?.phone} · {res.customer?.address}</p>
         <p>Order {res.order?.number} · delivered {dt(res.order?.deliveredAt)} · installed {dt(res.order?.installedAt)}</p>

@@ -2,6 +2,33 @@ import { describe, it, expect } from "vitest";
 import { addMonths, billTicket, isWarrantyActive, warrantyStatus } from "../src/lib/warranty";
 import { bomQty, quoteTotals } from "../src/lib/bom";
 import { jobFinancials } from "../src/lib/finance";
+import { receiptFingerprint } from "../src/lib/procurement";
+import { initialSubsidyStage, missingSubsidyDocuments, subsidyStageStatus, subsidyTransitionError } from "../src/lib/subsidy";
+
+describe("purchase-order receipt idempotency", () => {
+  it("fingerprints serials without depending on input order", () => {
+    expect(receiptFingerprint(["SERIAL-A", "SERIAL-B"])).toBe(receiptFingerprint(["SERIAL-B", "SERIAL-A"]));
+    expect(receiptFingerprint(["SERIAL-A"])).not.toBe(receiptFingerprint(["SERIAL-B"]));
+  });
+});
+
+describe("subsidy workflow", () => {
+  it("creates applications as drafts and maps stages to legacy statuses", () => {
+    expect(initialSubsidyStage).toBe("DRAFT");
+    expect(subsidyStageStatus("DOCUMENTS_PENDING")).toBe("PENDING");
+    expect(subsidyStageStatus("UNDER_REVIEW")).toBe("SUBMITTED");
+    expect(subsidyStageStatus("APPROVED")).toBe("APPROVED");
+  });
+  it("allows only valid stage transitions", () => {
+    expect(subsidyTransitionError("DRAFT", "DOCUMENTS_PENDING")).toBeNull();
+    expect(subsidyTransitionError("DOCUMENTS_PENDING", "SUBMITTED")).toContain("Cannot move");
+    expect(subsidyTransitionError("APPROVED", "DOCUMENTS_PENDING")).toContain("Cannot move");
+  });
+  it("identifies missing required checklist items", () => {
+    expect(missingSubsidyDocuments(["ID proof", "Invoice"], ["ID proof"])).toEqual(["Invoice"]);
+    expect(missingSubsidyDocuments(["ID proof"], ["ID proof"])).toEqual([]);
+  });
+});
 
 describe("warranty", () => {
   it("adds 24 and 240 months", () => {
@@ -39,5 +66,13 @@ describe("finance", () => {
   it("does not double count advance + final", () => {
     const f = jobFinancials({ total: 100000, payments: [30000, 70000], items: [{ qty: 2, unitCost: 20000 }], labourHours: 6, labourRate: 500 });
     expect(f.collected).toBe(100000); expect(f.outstanding).toBe(0); expect(f.cost).toBe(43000); expect(f.estimatedProfit).toBe(57000);
+  });
+  it("separates order value from invoiced revenue and includes recorded project expenses", () => {
+    const f = jobFinancials({ total: 100000, invoiceTotal: 60000, payments: [30000], items: [{ qty: 1, unitCost: 20000 }], labourHours: 4, labourRate: 500, projectExpenses: 1500 });
+    expect(f.orderValue).toBe(100000);
+    expect(f.invoiced).toBe(60000);
+    expect(f.outstanding).toBe(70000);
+    expect(f.invoiceOutstanding).toBe(30000);
+    expect(f.estimatedProfit).toBe(76500);
   });
 });

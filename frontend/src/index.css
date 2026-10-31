@@ -1,3 +1,5 @@
 @tailwind base; @tailwind components; @tailwind utilities;
-body { @apply bg-slate-50 text-navy antialiased; }
+body { @apply bg-[#f7f9f7] text-navy antialiased; }
+button, a, input, select, textarea { transition: color 140ms ease, background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
+::selection { background: #d8efe0; color: #172b3a; }
 @media print { .no-print { display: none !important; } }

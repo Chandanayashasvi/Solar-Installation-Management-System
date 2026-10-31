@@ -6,22 +6,22 @@ import { allow } from "../middleware/auth";
 import { round2 } from "../lib/warranty";
 export const orderRoutes = Router();
 
-const include = { customer: true, items: true, payments: { orderBy: { paidAt: "asc" as const } }, job: true, subsidy: true, assets: { include: { product: { select: { name: true } }, warranty: true } } };
+const include = { customer: true, items: true, payments: { orderBy: { paidAt: "asc" as const } }, job: true, subsidy: true, invoice: true, assets: { include: { product: { select: { name: true } }, warranty: true } } };
 const view = (o: any) => { const paid = round2(o.payments.reduce((s: number, p: any) => s + n(p.amount), 0)); return { ...o, paid, outstanding: round2(n(o.total) - paid) }; };
 
-orderRoutes.get("/orders", allow("SALES", "WAREHOUSE", "TECHNICIAN", "SUPPORT"), ah(async (req, res) => {
+orderRoutes.get("/orders", allow("SALES", "WAREHOUSE", "TECHNICIAN", "SUPPORT", "FINANCE"), ah(async (req, res) => {
   const where: any = req.query.status ? { status: String(req.query.status) } : {};
-  const rows = await prisma.order.findMany({ where, orderBy: { createdAt: "desc" }, include: { customer: true, payments: true, job: true } });
+  const rows = await prisma.order.findMany({ where, orderBy: { createdAt: "desc" }, include: { customer: true, payments: true, job: true, invoice: true, subsidy: true } });
   const mine = req.user!.role === "TECHNICIAN" ? rows.filter((o) => o.job?.technicianId === req.user!.id) : rows;
   res.json(mine.map(view));
 }));
-orderRoutes.get("/orders/:id", allow("SALES", "WAREHOUSE", "TECHNICIAN", "SUPPORT"), ah(async (req, res) => {
+orderRoutes.get("/orders/:id", allow("SALES", "WAREHOUSE", "TECHNICIAN", "SUPPORT", "FINANCE"), ah(async (req, res) => {
   const o = await prisma.order.findUnique({ where: { id: req.params.id }, include });
   if (!o) throw new AppError(404, "Order not found"); res.json(view(o));
 }));
 
 // Payment: row lock + idempotency key => no double-recording, no overpayment, even with concurrent clicks.
-orderRoutes.post("/orders/:id/payments", allow("SALES"), ah(async (req, res) => {
+orderRoutes.post("/orders/:id/payments", allow("SALES", "FINANCE"), ah(async (req, res) => {
   const d = z.object({ amount: z.coerce.number().positive(), method: z.enum(["CASH", "UPI", "BANK_TRANSFER", "CHEQUE", "CARD"]), reference: z.string().max(80).optional(), idempotencyKey: z.string().min(8).max(80) }).parse(req.body);
   const out = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Order" WHERE id = ${req.params.id} FOR UPDATE`;
@@ -59,10 +59,7 @@ orderRoutes.post("/orders/:id/schedule", allow("SALES"), ah(async (req, res) => 
   res.json(await prisma.installationJob.upsert({ where: { orderId: o.id }, create: { orderId: o.id, technicianId: t.id, scheduledFor: d.scheduledFor }, update: { technicianId: t.id, scheduledFor: d.scheduledFor } }));
 }));
 
-orderRoutes.get("/subsidies", allow("SALES"), ah(async (_req, res) => res.json(await prisma.subsidy.findMany({ include: { order: { include: { customer: true } } } }))));
-orderRoutes.put("/orders/:id/subsidy", allow("SALES"), ah(async (req, res) => {
-  const d = z.object({ status: z.enum(["PENDING", "SUBMITTED", "APPROVED", "REJECTED", "PAID"]), reference: z.string().max(60).optional(), claimed: z.coerce.number().min(0).default(0), received: z.coerce.number().min(0).default(0), notes: z.string().max(500).optional(), documents: z.array(z.string().max(100)).max(20).default([]) })
-    .refine((v) => v.received <= v.claimed || v.claimed === 0 ? true : false, { message: "Received cannot exceed claimed", path: ["received"] }).parse(req.body);
-  const data = { ...d, submittedAt: d.status === "SUBMITTED" ? new Date() : undefined };
-  res.json(await prisma.subsidy.upsert({ where: { orderId: req.params.id }, create: { orderId: req.params.id, ...data }, update: data }));
+orderRoutes.get("/subsidies", allow("FINANCE"), ah(async (_req, res) => res.json(await prisma.subsidy.findMany({ include: { order: { include: { customer: true } } } }))));
+orderRoutes.put("/orders/:id/subsidy", allow("FINANCE"), ah(async () => {
+  throw new AppError(410, "This subsidy endpoint is retired. Use the staged workflow at /finance/subsidies.");
 }));

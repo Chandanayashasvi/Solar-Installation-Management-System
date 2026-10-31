@@ -16,6 +16,8 @@ import { orderRoutes } from "./routes/orders";
 import { opsRoutes } from "./routes/ops";
 import { serviceRoutes } from "./routes/service";
 import { reportRoutes } from "./routes/reports";
+import { financeOpsRoutes } from "./routes/finance-ops";
+import { adminRoutes } from "./routes/admin";
 
 export function buildApp() {
   fs.mkdirSync(config.UPLOAD_DIR, { recursive: true });
@@ -32,7 +34,7 @@ export function buildApp() {
   app.use("/api/auth", authRoutes);
   app.use("/api/public", rateLimit({ windowMs: 60_000, limit: 10 }), publicRoutes);
   app.use("/api", authenticate);
-  app.use("/api", crmRoutes, catalogRoutes, orderRoutes, opsRoutes, serviceRoutes, reportRoutes);
+  app.use("/api", crmRoutes, catalogRoutes, orderRoutes, opsRoutes, serviceRoutes, reportRoutes, financeOpsRoutes, adminRoutes);
   app.use((_req, _res, next) => next(new AppError(404, "Not found")));
   app.use(errorHandler);
   return app;

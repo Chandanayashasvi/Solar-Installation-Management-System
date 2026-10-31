@@ -1,1 +1,1 @@
-export default { content: ["./index.html", "./src/**/*.{ts,tsx}"], theme: { extend: { colors: { solar: { 50: "#f0f7f1", 100: "#dcebdf", 600: "#1f7a43", 700: "#176636", 800: "#124f2a" }, navy: "#14213d" } } }, plugins: [] };
+export default { content: ["./index.html", "./src/**/*.{ts,tsx}"], theme: { extend: { colors: { solar: { 50: "#eef8f1", 100: "#d8efe0", 600: "#168451", 700: "#10663f", 800: "#0b4d30" }, navy: "#172b3a" } } }, plugins: [] };

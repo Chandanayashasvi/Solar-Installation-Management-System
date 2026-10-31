@@ -6,10 +6,10 @@ const map: Record<string, string> = { WON: "green", ACTIVE: "green", APPROVED: "
 export const Badge = ({ v }: { v: string }) => <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone[map[v] ?? "gray"]}`}>{v.replace(/_/g, " ")}</span>;
 export const Btn = ({ kind = "primary", ...p }: React.ButtonHTMLAttributes<HTMLButtonElement> & { kind?: "primary" | "ghost" | "danger" }) => (
   <button {...p} className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-solar-600 ${kind === "primary" ? "bg-solar-700 text-white hover:bg-solar-800" : kind === "danger" ? "bg-red-600 text-white hover:bg-red-700" : "border border-slate-300 bg-white hover:bg-slate-50"} ${p.className ?? ""}`} />);
-export const Field = ({ label, ...p }: React.InputHTMLAttributes<HTMLInputElement> & { label: string }) => (
-  <label className="block text-sm"><span className="mb-1 block text-slate-600">{label}</span><input {...p} className="w-full rounded-lg border border-slate-300 px-3 py-1.5 focus:border-solar-600 focus:outline-none focus:ring-1 focus:ring-solar-600" /></label>);
-export const Select = ({ label, children, ...p }: React.SelectHTMLAttributes<HTMLSelectElement> & { label: string }) => (
-  <label className="block text-sm"><span className="mb-1 block text-slate-600">{label}</span><select {...p} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5">{children}</select></label>);
+export const Field = ({ label, hint, ...p }: React.InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string }) => (
+  <label className="block text-sm"><span className="mb-1 block text-slate-600">{label}</span><input {...p} className="w-full rounded-lg border border-slate-300 px-3 py-1.5 focus:border-solar-600 focus:outline-none focus:ring-1 focus:ring-solar-600" />{hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}</label>);
+export const Select = ({ label, hint, children, ...p }: React.SelectHTMLAttributes<HTMLSelectElement> & { label: string; hint?: string }) => (
+  <label className="block text-sm"><span className="mb-1 block text-slate-600">{label}</span><select {...p} className="w-full rounded-lg border border-slate-300 bg-white px-3 py-1.5">{children}</select>{hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}</label>);
 export const Skeleton = () => <div className="space-y-2">{[0, 1, 2].map((i) => <div key={i} className="h-8 animate-pulse rounded bg-slate-100" />)}</div>;
 export const Empty = ({ text }: { text: string }) => <p className="py-6 text-center text-sm text-slate-500">{text}</p>;
 export const Th = ({ children }: { children?: ReactNode }) => <th className="px-2 py-2 text-left text-xs font-semibold uppercase text-slate-500">{children}</th>;

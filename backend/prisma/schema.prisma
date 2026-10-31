@@ -12,6 +12,8 @@ enum Role {
   WAREHOUSE
   TECHNICIAN
   SUPPORT
+  SURVEYOR
+  FINANCE
 }
 enum EnquiryStatus {
   NEW
@@ -26,6 +28,8 @@ enum SurveyStatus {
   PENDING
   APPROVED
   REJECTED
+  IN_PROGRESS
+  SUBMITTED
 }
 enum SystemType {
   ON_GRID
@@ -66,6 +70,27 @@ enum MoveType {
 enum JobStatus {
   SCHEDULED
   COMPLETED
+  IN_PROGRESS
+  QUALITY_CHECK
+}
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  VOID
+}
+enum PurchaseOrderStatus {
+  DRAFT
+  ORDERED
+  PARTIALLY_RECEIVED
+  RECEIVED
+  CANCELLED
+}
+enum TechnicianPaymentStatus {
+  RECORDED
+  PAID
 }
 enum TicketStatus {
   OPEN
@@ -94,6 +119,10 @@ model User {
   role Role
   active Boolean @default(true)
   createdAt DateTime @default(now())
+  assignedSurveys Survey[] @relation("SurveyAssignment")
+  submittedSurveys Survey[] @relation("SurveySubmission")
+  reviewedSurveys Survey[] @relation("SurveyReview")
+  technicianPayments TechnicianPayment[]
 }
 
 model Customer {
@@ -115,7 +144,11 @@ model Enquiry {
   source String @default("WEB")
   requestedKw Int
   systemType SystemType
+  monthlyBill Float?
+  subsidyRequirement String?
   notes String?
+  publicSubmissionKey String? @unique
+  isDemo Boolean @default(false)
   status EnquiryStatus @default(NEW)
   assignedToId String?
   nextFollowUp DateTime?
@@ -140,14 +173,25 @@ model Survey {
   id String @id @default(cuid())
   enquiryId String @unique
   enquiry Enquiry @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
-  roofArea Float
-  shadowFreeArea Float
-  direction String
-  tilt Float
-  cableDistance Float
-  monthlyBill Float
-  gridSuitable Boolean
+  roofArea Float?
+  shadowFreeArea Float?
+  direction String?
+  tilt Float?
+  cableDistance Float?
+  monthlyBill Float?
+  gridSuitable Boolean?
   notes String?
+  shading String?
+  photos String[] @default([])
+  scheduledFor DateTime?
+  submittedAt DateTime?
+  submittedById String?
+  submittedBy User? @relation("SurveySubmission", fields: [submittedById], references: [id])
+  decisionComment String?
+  assignedSurveyorId String?
+  assignedSurveyor User? @relation("SurveyAssignment", fields: [assignedSurveyorId], references: [id])
+  decidedById String?
+  decidedBy User? @relation("SurveyReview", fields: [decidedById], references: [id])
   technicianId String?
   status SurveyStatus @default(PENDING)
   decidedAt DateTime?
@@ -179,6 +223,8 @@ model Product {
   policy WarrantyPolicy?
   assets Asset[]
   packageItems PackageItem[]
+  purchaseOrderItems PurchaseOrderItem[]
+  stockReservations StockReservation[]
 }
 
 model WarrantyPolicy {
@@ -259,6 +305,9 @@ model Order {
   assets Asset[]
   job InstallationJob?
   subsidy Subsidy?
+  invoice Invoice?
+  projectExpenses ProjectExpense[]
+  stockReservations StockReservation[]
 }
 model OrderItem {
   id String @id @default(cuid())
@@ -289,6 +338,7 @@ model Supplier {
   name String @unique
   phone String?
   assets Asset[]
+  purchaseOrders PurchaseOrder[]
 }
 
 model Asset {
@@ -317,6 +367,9 @@ model StockMovement {
   unitCost Decimal? @db.Decimal(12, 2)
   note String?
   userId String?
+  purchaseOrderId String?
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  idempotencyKey String? @unique
   createdAt DateTime @default(now())
   @@index([productId])
 }
@@ -337,6 +390,11 @@ model InstallationJob {
   photos String[]
   customerSignature String?
   completedAt DateTime?
+  notes String?
+  qualityComment String?
+  qualityReviewedAt DateTime?
+  qualityReviewedById String?
+  returnVisitRequired Boolean @default(false)
 }
 
 model Warranty {
@@ -372,6 +430,9 @@ model Ticket {
   customerConfirmedAt DateTime?
   createdAt DateTime @default(now())
   resolvedAt DateTime?
+  coverageDecidedAt DateTime?
+  coverageDecidedById String?
+  coverageReason String?
   @@index([status])
 }
 
@@ -380,12 +441,132 @@ model Subsidy {
   orderId String @unique
   order Order @relation(fields: [orderId], references: [id])
   status SubsidyStatus @default(PENDING)
+  stage String @default("DRAFT")
   reference String?
   claimed Decimal @db.Decimal(12, 2) @default(0)
   received Decimal @db.Decimal(12, 2) @default(0)
   documents String[]
+  requiredDocuments String[] @default([])
+  receivedDocuments String[] @default([])
   submittedAt DateTime?
+  applicationDate DateTime @default(now())
   notes String?
+  followUpAt DateTime?
+  reviewedAt DateTime?
+  attachments SubsidyDocument[]
+}
+
+model SubsidyDocument {
+  id String @id @default(cuid())
+  subsidyId String
+  subsidy Subsidy @relation(fields: [subsidyId], references: [id], onDelete: Cascade)
+  name String
+  mimeType String
+  content Bytes
+  uploadedById String
+  createdAt DateTime @default(now())
+  @@index([subsidyId, createdAt])
+}
+
+model Invoice {
+  id String @id @default(cuid())
+  number String @unique
+  orderId String @unique
+  order Order @relation(fields: [orderId], references: [id])
+  status InvoiceStatus @default(ISSUED)
+  subtotal Decimal @db.Decimal(12, 2)
+  discount Decimal @db.Decimal(12, 2) @default(0)
+  tax Decimal @db.Decimal(12, 2)
+  total Decimal @db.Decimal(12, 2)
+  issuedAt DateTime @default(now())
+  dueAt DateTime
+  createdById String
+  createdAt DateTime @default(now())
+  items InvoiceItem[]
+}
+
+model InvoiceItem {
+  id String @id @default(cuid())
+  invoiceId String
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  description String
+  qty Int
+  unitPrice Decimal @db.Decimal(12, 2)
+  taxRate Decimal @db.Decimal(5, 2)
+  lineTotal Decimal @db.Decimal(12, 2)
+}
+
+model ProjectExpense {
+  id String @id @default(cuid())
+  orderId String?
+  order Order? @relation(fields: [orderId], references: [id])
+  category String
+  description String
+  amount Decimal @db.Decimal(12, 2)
+  reference String?
+  incurredAt DateTime @default(now())
+  recordedById String
+  createdAt DateTime @default(now())
+  @@index([orderId, incurredAt])
+}
+
+model PurchaseOrder {
+  id String @id @default(cuid())
+  number String @unique
+  supplierId String
+  supplier Supplier @relation(fields: [supplierId], references: [id])
+  status PurchaseOrderStatus @default(DRAFT)
+  expectedAt DateTime?
+  orderedAt DateTime?
+  receivedAt DateTime?
+  createdById String
+  createdAt DateTime @default(now())
+  items PurchaseOrderItem[]
+  stockMovements StockMovement[]
+  @@index([status, createdAt])
+}
+
+model PurchaseOrderItem {
+  id String @id @default(cuid())
+  purchaseOrderId String
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  qty Int
+  receivedQty Int @default(0)
+  unitCost Decimal @db.Decimal(12, 2)
+  @@unique([purchaseOrderId, productId])
+}
+
+model StockReservation {
+  id String @id @default(cuid())
+  orderId String
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId String
+  product Product @relation(fields: [productId], references: [id])
+  qty Int
+  createdAt DateTime @default(now())
+  @@unique([orderId, productId])
+}
+
+model TechnicianPayment {
+  id String @id @default(cuid())
+  technicianId String
+  technician User @relation(fields: [technicianId], references: [id])
+  periodStart DateTime
+  periodEnd DateTime
+  hours Float
+  rate Decimal @db.Decimal(12, 2)
+  amount Decimal @db.Decimal(12, 2)
+  paidAmount Decimal @db.Decimal(12, 2) @default(0)
+  status TechnicianPaymentStatus @default(RECORDED)
+  paidAt DateTime?
+  paymentMethod String?
+  reference String?
+  notes String?
+  recordedById String
+  createdAt DateTime @default(now())
+  @@unique([technicianId, periodStart, periodEnd])
 }
 
 model AuditLog {
